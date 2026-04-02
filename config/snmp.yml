@@ -1,0 +1,30 @@
+# Templates SNMP por fabricante
+templates:
+  mikrotik:
+    system:
+      name: SNMPv2-MIB::sysName.0
+      descr: SNMPv2-MIB::sysDescr.0
+      uptime: SNMPv2-MIB::sysUpTime.0
+    cpu: HOST-RESOURCES-MIB::hrProcessorLoad.1
+    memory:
+      total: HOST-RESOURCES-MIB::hrStorageSize.1
+      used: HOST-RESOURCES-MIB::hrStorageUsed.1
+    interfaces: IF-MIB::ifTable
+
+  huawei_olt:
+    system:
+      name: SNMPv2-MIB::sysName.0
+    onus:
+      online: HUAWEI-XPON-MIB::hwGponOntInfoEntry
+      status: HUAWEI-XPON-MIB::hwGponOntRunStatus
+    optical:
+      rx_power: HUAWEI-XPON-MIB::hwGponOntOpticalDdmRxPower
+      tx_power: HUAWEI-XPON-MIB::hwGponOntOpticalDdmTxPower
+
+  zte_olt:
+    system:
+      name: SNMPv2-MIB::sysName.0
+    onus:
+      online: ZTE-GPON-ONU-MIB::zxAnGponOntOnlineStateTable
+    optical:
+      rx_power: ZTE-GPON-ONU-MIB::zxAnGponOntRxPower

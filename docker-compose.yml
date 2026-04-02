@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # Zabbix Stack
+  # ============================================
+  zabbix-postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix_pwd
+    volumes:
+      - zabbix_pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:ubuntu-7.0-latest
+    depends_on:
+      - zabbix-postgres
+    environment:
+      DB_SERVER_HOST: zabbix-postgres
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix_pwd
+      ZBX_STARTPOLLERS: 5
+      ZBX_STARTPINGERS: 3
+      ZBX_STARTTRAPPERS: 2
+    ports:
+      - "10051:10051"
+    volumes:
+      - ./mibs:/usr/share/snmp/mibs:ro
+    restart: unless-stopped
+
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:ubuntu-7.0-latest
+    depends_on:
+      - zabbix-server
+      - zabbix-postgres
+    environment:
+      DB_SERVER_HOST: zabbix-postgres
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix_pwd
+      ZBX_SERVER_HOST: zabbix-server
+      PHP_TZ: America/Sao_Paulo
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  zabbix-agent:
+    image: zabbix/zabbix-agent:ubuntu-7.0-latest
+    depends_on:
+      - zabbix-server
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_HOSTNAME: "Zabbix server"
+    restart: unless-stopped
+
+  # ============================================
+  # LiberDiscovery Backend (FastAPI)
+  # ============================================
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      - zabbix-server
+      - redis
+    environment:
+      ZABBIX_URL: http://zabbix-web:8080/api_jsonrpc.php
+      ZABBIX_USER: Admin
+      ZABBIX_PASSWORD: zabbix
+      REDIS_URL: redis://redis:6379
+    volumes:
+      - ./backend/app:/app/app
+    restart: unless-stopped
+
+  # ============================================
+  # LiberDiscovery Frontend (React)
+  # ============================================
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ============================================
+  # Redis (Cache)
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  zabbix_pg_data:
+  redis_data:

@@ -1,0 +1,26 @@
+alert_rules:
+  - name: device_down
+    condition: icmp_status == 'down'
+    severity: critical
+    message: "Dispositivo {device_name} está offline"
+
+  - name: high_cpu
+    condition: cpu_usage > 90
+    duration: 5m
+    severity: warning
+    message: "CPU alta em {device_name}: {value}%"
+
+  - name: interface_down
+    condition: interface_status == 'down'
+    severity: major
+    message: "Interface {interface_name} down em {device_name}"
+
+  - name: high_traffic
+    condition: interface_utilization > 80
+    severity: warning
+    message: "Tráfego alto em {interface_name}: {value}%"
+
+  - name: optical_low
+    condition: onu_rx_power < -27
+    severity: warning
+    message: "Sinal óptico baixo em ONU {onu_serial}: {value} dBm"
