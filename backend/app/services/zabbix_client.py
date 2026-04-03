@@ -431,7 +431,7 @@ class ZabbixClient:
         if checks is None:
             checks = [
                 {"type": 12},                                          # ICMP ping
-                {"type": 11, "ports": "161", "snmp_community": "public"},  # SNMPv2
+                {"type": 11, "ports": "161", "snmp_community": "public", "snmp_oid": "1.3.6.1.2.1.1.1.0"},  # SNMPv2 (sysDescr)
                 {"type": 9, "ports": "10050"},                         # Zabbix agent
             ]
 
@@ -501,6 +501,106 @@ class ZabbixClient:
             params["search"] = {"name": search}
 
         return await self._request("template.get", params)
+
+    # ========== Host Management (CRUD) ==========
+
+    async def create_host(
+        self,
+        name: str,
+        host: str,
+        group_ids: list[str],
+        interfaces: list[dict],
+        template_ids: list[str] | None = None,
+        description: str = "",
+        tags: list[dict] | None = None,
+    ) -> dict:
+        """Cria um novo host no Zabbix com interfaces e templates."""
+        params = {
+            "host": host,
+            "name": name,
+            "groups": [{"groupid": gid} for gid in group_ids],
+            "interfaces": interfaces,
+            "description": description,
+        }
+        if template_ids:
+            params["templates"] = [{"templateid": tid} for tid in template_ids]
+        if tags:
+            params["tags"] = tags
+
+        return await self._request("host.create", params)
+
+    async def update_host(self, host_id: str, **kwargs) -> dict:
+        """Atualiza um host existente."""
+        params = {"hostid": host_id}
+
+        # Mapear campos especiais
+        if "group_ids" in kwargs:
+            params["groups"] = [{"groupid": gid} for gid in kwargs.pop("group_ids")]
+        if "template_ids" in kwargs:
+            params["templates"] = [{"templateid": tid} for tid in kwargs.pop("template_ids")]
+
+        params.update(kwargs)
+        return await self._request("host.update", params)
+
+    async def delete_hosts(self, host_ids: list[str]) -> dict:
+        """Remove hosts do Zabbix."""
+        return await self._request("host.delete", host_ids)
+
+    async def mass_update_hosts(self, host_ids: list[str], template_ids_add: list[str] | None = None) -> dict:
+        """Atualiza múltiplos hosts (adicionar templates em lote)."""
+        params = {"hosts": [{"hostid": hid} for hid in host_ids]}
+        if template_ids_add:
+            params["templates_link"] = [{"templateid": tid} for tid in template_ids_add]
+        return await self._request("host.massupdate", params)
+
+    # ========== Host Interfaces ==========
+
+    async def get_host_interfaces(self, host_id: str) -> list[dict]:
+        """Lista interfaces de um host."""
+        return await self._request("hostinterface.get", {
+            "hostids": [host_id],
+            "output": "extend",
+        })
+
+    async def create_host_interface(
+        self,
+        host_id: str,
+        type: int,  # 1=agent, 2=SNMP, 3=IPMI, 4=JMX
+        ip: str,
+        port: str,
+        main: int = 1,
+        useip: int = 1,
+        dns: str = "",
+        details: dict | None = None,
+    ) -> dict:
+        """Cria uma interface em um host."""
+        params = {
+            "hostid": host_id,
+            "type": type,
+            "ip": ip,
+            "port": port,
+            "main": main,
+            "useip": useip,
+            "dns": dns,
+        }
+        if details and type == 2:  # SNMP
+            params["details"] = details
+        return await self._request("hostinterface.create", params)
+
+    async def update_host_interface(self, interface_id: str, **kwargs) -> dict:
+        """Atualiza uma interface."""
+        params = {"interfaceid": interface_id, **kwargs}
+        return await self._request("hostinterface.update", params)
+
+    async def delete_host_interfaces(self, interface_ids: list[str]) -> dict:
+        """Remove interfaces."""
+        return await self._request("hostinterface.delete", interface_ids)
+
+    # ========== Host Group Management ==========
+
+    async def create_host_group(self, name: str) -> dict:
+        """Cria um grupo de hosts."""
+        return await self._request("hostgroup.create", {"name": name})
 
     # ========== Graphs (para widgets) ==========
 

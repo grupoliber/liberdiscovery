@@ -32,6 +32,35 @@ export const getDeviceGroups = () => request('/devices/groups');
 
 export const getDevice = (hostId) => request(`/devices/${hostId}`);
 
+export const getDeviceTemplates = (search = null) => {
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  return request(`/devices/templates?${params}`);
+};
+
+export const getDeviceInterfaces = (hostId) => request(`/devices/${hostId}/interfaces`);
+
+export const createDevice = (data) =>
+  request('/devices', { method: 'POST', body: JSON.stringify(data) });
+
+export const updateDevice = (hostId, data) =>
+  request(`/devices/${hostId}`, { method: 'PUT', body: JSON.stringify(data) });
+
+export const deleteDevice = (hostId) =>
+  request(`/devices/${hostId}`, { method: 'DELETE' });
+
+export const createDeviceGroup = (name) =>
+  request('/devices/groups', { method: 'POST', body: JSON.stringify({ name }) });
+
+export const addDeviceInterface = (hostId, data) =>
+  request(`/devices/${hostId}/interfaces`, { method: 'POST', body: JSON.stringify(data) });
+
+export const deleteDeviceInterface = (hostId, interfaceId) =>
+  request(`/devices/${hostId}/interfaces/${interfaceId}`, { method: 'DELETE' });
+
+export const linkTemplates = (hostId, templateIds) =>
+  request(`/devices/${hostId}/templates`, { method: 'PUT', body: JSON.stringify(templateIds) });
+
 // === Alertas ===
 export const getAlerts = (severityMin = 0, acknowledged = null, limit = 100) => {
   const params = new URLSearchParams();
