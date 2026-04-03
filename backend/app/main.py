@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    description="Network Monitoring System para ISPs - Powered by Zabbix",
+    description="Network Monitoring System para ISPs - Powered by Libernet",
     lifespan=lifespan,
 )
 

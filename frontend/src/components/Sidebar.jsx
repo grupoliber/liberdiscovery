@@ -50,7 +50,7 @@ export default function Sidebar() {
       </nav>
 
       <div className="p-4 border-t border-dark-700 text-xs text-dark-400">
-        Powered by Zabbix
+        Powered by Libernet
       </div>
     </aside>
   );
