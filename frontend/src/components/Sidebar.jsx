@@ -5,12 +5,16 @@ import {
   AlertTriangle,
   Network,
   BarChart3,
+  Activity,
+  Radar,
 } from 'lucide-react';
 
 const links = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/sensors', label: 'Sensores', icon: Activity },
   { to: '/devices', label: 'Dispositivos', icon: Server },
   { to: '/alerts', label: 'Alertas', icon: AlertTriangle },
+  { to: '/discovery', label: 'Discovery', icon: Radar },
   { to: '/topology', label: 'Topologia', icon: Network },
   { to: '/metrics', label: 'Métricas', icon: BarChart3 },
 ];

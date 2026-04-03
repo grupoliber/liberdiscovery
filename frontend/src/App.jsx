@@ -6,6 +6,8 @@ import DeviceDetail from './pages/DeviceDetail';
 import Alerts from './pages/Alerts';
 import Topology from './pages/Topology';
 import Metrics from './pages/Metrics';
+import Sensors from './pages/Sensors';
+import Discovery from './pages/Discovery';
 
 export default function App() {
   return (
@@ -14,9 +16,11 @@ export default function App() {
       <main className="flex-1 overflow-y-auto p-6">
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/sensors" element={<Sensors />} />
           <Route path="/devices" element={<Devices />} />
           <Route path="/devices/:hostId" element={<DeviceDetail />} />
           <Route path="/alerts" element={<Alerts />} />
+          <Route path="/discovery" element={<Discovery />} />
           <Route path="/topology" element={<Topology />} />
           <Route path="/metrics" element={<Metrics />} />
         </Routes>

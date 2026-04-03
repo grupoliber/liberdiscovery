@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.services.zabbix_client import zabbix
 from app.services.cache import cache
-from app.routers import devices, alerts, metrics, topology, dashboard
+from app.routers import devices, alerts, metrics, topology, dashboard, sensors, discovery
 
 
 @asynccontextmanager
@@ -46,6 +46,8 @@ app.include_router(devices.router, prefix="/api/v1", tags=["Dispositivos"])
 app.include_router(alerts.router, prefix="/api/v1", tags=["Alertas"])
 app.include_router(metrics.router, prefix="/api/v1", tags=["Métricas"])
 app.include_router(topology.router, prefix="/api/v1", tags=["Topologia"])
+app.include_router(sensors.router, prefix="/api/v1", tags=["Sensores"])
+app.include_router(discovery.router, prefix="/api/v1", tags=["Discovery"])
 
 
 @app.get("/api/v1/health")

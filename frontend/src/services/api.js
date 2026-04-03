@@ -83,5 +83,42 @@ export const getMaps = () => request('/topology/maps');
 
 export const getMap = (mapId) => request(`/topology/maps/${mapId}`);
 
+// === Sensores ===
+export const getSensorsTree = () => request('/sensors/tree');
+
+export const getSensorsSummary = () => request('/sensors/summary');
+
+export const getSensorDetail = (itemId) => request(`/sensors/${itemId}`);
+
+export const getHostSensors = (hostId, search = null) => {
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  return request(`/sensors/host/${hostId}?${params}`);
+};
+
+// === Discovery ===
+export const getDiscoveryRules = () => request('/discovery/rules');
+
+export const createDiscoveryRule = (data) =>
+  request('/discovery/rules', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+export const updateDiscoveryRule = (druleId, data) =>
+  request(`/discovery/rules/${druleId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+
+export const deleteDiscoveryRule = (druleId) =>
+  request(`/discovery/rules/${druleId}`, { method: 'DELETE' });
+
+export const getDiscoveredHosts = (druleId = null) => {
+  const params = new URLSearchParams();
+  if (druleId) params.set('drule_id', druleId);
+  return request(`/discovery/hosts?${params}`);
+};
+
 // === Health ===
 export const healthCheck = () => request('/health');

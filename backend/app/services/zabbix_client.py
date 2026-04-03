@@ -267,6 +267,303 @@ class ZabbixClient:
         }
 
 
+    # ========== Sensores (Items como sensores PRTG) ==========
+
+    async def get_sensors_tree(self) -> list[dict]:
+        """Retorna árvore: Grupo > Host > Sensores (items + triggers)."""
+        groups = await self._request("hostgroup.get", {
+            "output": ["groupid", "name"],
+            "selectHosts": ["hostid", "name", "status", "available"],
+            "sortfield": "name",
+            "filter": {"flags": 0},  # apenas grupos normais
+        })
+
+        tree = []
+        for group in groups:
+            hosts = group.get("hosts", [])
+            if not hosts:
+                continue
+
+            host_ids = [h["hostid"] for h in hosts]
+
+            # Buscar items (sensores) de todos os hosts do grupo
+            items = await self._request("item.get", {
+                "hostids": host_ids,
+                "output": ["itemid", "hostid", "name", "key_", "lastvalue",
+                           "units", "lastclock", "value_type", "status", "state",
+                           "error"],
+                "filter": {"status": 0},
+                "sortfield": "name",
+            })
+
+            # Buscar triggers ativos dos hosts
+            triggers = await self._request("trigger.get", {
+                "hostids": host_ids,
+                "output": ["triggerid", "description", "priority", "value",
+                           "lastchange"],
+                "selectHosts": ["hostid"],
+                "filter": {"status": 0},
+            })
+
+            # Montar mapa de triggers por host
+            triggers_by_host = {}
+            for t in triggers:
+                for h in t.get("hosts", []):
+                    hid = h["hostid"]
+                    triggers_by_host.setdefault(hid, []).append(t)
+
+            # Montar mapa de items por host
+            items_by_host = {}
+            for item in items:
+                hid = item["hostid"]
+                items_by_host.setdefault(hid, []).append(item)
+
+            group_hosts = []
+            for host in hosts:
+                hid = host["hostid"]
+                host_items = items_by_host.get(hid, [])
+                host_triggers = triggers_by_host.get(hid, [])
+
+                # Classificar sensores por tipo (estilo PRTG)
+                sensors = _classify_sensors(host_items)
+
+                # Status geral do host baseado nos triggers
+                active_triggers = [t for t in host_triggers if t.get("value") == "1"]
+                max_severity = max(
+                    (int(t["priority"]) for t in active_triggers), default=0
+                )
+
+                group_hosts.append({
+                    "hostid": hid,
+                    "name": host["name"],
+                    "available": host.get("available", "0"),
+                    "status": _host_status(host.get("available", "0"), max_severity),
+                    "sensor_count": len(host_items),
+                    "problem_count": len(active_triggers),
+                    "max_severity": max_severity,
+                    "sensors": sensors,
+                })
+
+            total_sensors = sum(h["sensor_count"] for h in group_hosts)
+            total_problems = sum(h["problem_count"] for h in group_hosts)
+
+            tree.append({
+                "groupid": group["groupid"],
+                "name": group["name"],
+                "host_count": len(group_hosts),
+                "sensor_count": total_sensors,
+                "problem_count": total_problems,
+                "hosts": group_hosts,
+            })
+
+        return tree
+
+    async def get_sensor_detail(self, item_id: str) -> dict:
+        """Retorna detalhes de um sensor (item) com histórico recente."""
+        items = await self._request("item.get", {
+            "itemids": [item_id],
+            "output": "extend",
+            "selectHosts": ["hostid", "name"],
+            "selectTriggers": ["triggerid", "description", "priority", "value"],
+        })
+        if not items:
+            return {}
+
+        item = items[0]
+        value_type = int(item.get("value_type", 0))
+
+        # Histórico das últimas 2 horas
+        import time
+        time_from = int(time.time()) - 7200
+
+        history = await self.get_history(
+            [item_id], value_type=value_type, time_from=time_from, limit=120
+        )
+
+        return {**item, "history": history}
+
+    # ========== Auto-Discovery (Zabbix Network Discovery) ==========
+
+    async def get_discovery_rules(self) -> list[dict]:
+        """Lista regras de descoberta de rede (Network Discovery)."""
+        return await self._request("drule.get", {
+            "output": ["druleid", "name", "iprange", "delay", "status"],
+            "selectDChecks": ["dcheckid", "type", "ports"],
+            "selectDHosts": "count",
+        })
+
+    async def get_discovery_hosts(self, drule_id: str | None = None) -> list[dict]:
+        """Lista hosts descobertos pelo discovery."""
+        params = {
+            "output": ["dhostid", "druleid", "status", "lastup", "lastdown"],
+            "selectDServices": ["dserviceid", "type", "port", "ip",
+                                "status", "lastup", "lastdown", "value"],
+        }
+        if drule_id:
+            params["druleids"] = [drule_id]
+
+        return await self._request("dhost.get", params)
+
+    async def create_discovery_rule(
+        self,
+        name: str,
+        ip_range: str,
+        delay: str = "1h",
+        checks: list[dict] | None = None,
+    ) -> dict:
+        """Cria uma nova regra de descoberta de rede."""
+        if checks is None:
+            checks = [
+                {"type": 3, "ports": ""},        # ICMP ping
+                {"type": 9, "ports": "161"},      # SNMPv2 agent
+                {"type": 11, "ports": "10050"},   # Zabbix agent
+            ]
+
+        return await self._request("drule.create", {
+            "name": name,
+            "iprange": ip_range,
+            "delay": delay,
+            "dchecks": checks,
+        })
+
+    async def update_discovery_rule(self, drule_id: str, **kwargs) -> dict:
+        """Atualiza uma regra de discovery."""
+        params = {"druleid": drule_id, **kwargs}
+        return await self._request("drule.update", params)
+
+    async def delete_discovery_rule(self, drule_ids: list[str]) -> dict:
+        """Remove regras de discovery."""
+        return await self._request("drule.delete", drule_ids)
+
+    # ========== Sensores de Serviço (HTTP, DNS, Port) ==========
+
+    async def get_web_scenarios(self, host_id: str | None = None) -> list[dict]:
+        """Lista web scenarios (HTTP checks) do Zabbix."""
+        params = {
+            "output": ["httptestid", "name", "delay", "status", "nextcheck"],
+            "selectHosts": ["hostid", "name"],
+            "selectSteps": ["httpstepid", "name", "url", "status_codes", "timeout"],
+        }
+        if host_id:
+            params["hostids"] = [host_id]
+
+        return await self._request("httptest.get", params)
+
+    # ========== SLA / Disponibilidade ==========
+
+    async def get_sla_list(self) -> list[dict]:
+        """Lista SLAs configurados."""
+        return await self._request("sla.get", {
+            "output": "extend",
+            "selectServiceTags": "extend",
+        })
+
+    async def get_sla_report(
+        self,
+        sla_id: str,
+        period_from: int,
+        period_to: int,
+    ) -> dict:
+        """Retorna relatório de SLA para um período."""
+        return await self._request("sla.getsli", {
+            "slaid": sla_id,
+            "period_from": period_from,
+            "period_to": period_to,
+        })
+
+    # ========== Templates ==========
+
+    async def get_templates(self, search: str | None = None) -> list[dict]:
+        """Lista templates disponíveis."""
+        params = {
+            "output": ["templateid", "name", "description"],
+            "selectItems": "count",
+            "selectTriggers": "count",
+            "sortfield": "name",
+        }
+        if search:
+            params["search"] = {"name": search}
+
+        return await self._request("template.get", params)
+
+    # ========== Graphs (para widgets) ==========
+
+    async def get_graphs(self, host_id: str | None = None) -> list[dict]:
+        """Lista gráficos configurados."""
+        params = {
+            "output": ["graphid", "name", "width", "height", "graphtype"],
+            "selectHosts": ["hostid", "name"],
+            "sortfield": "name",
+        }
+        if host_id:
+            params["hostids"] = [host_id]
+
+        return await self._request("graph.get", params)
+
+    async def get_graph_items(self, graph_id: str) -> list[dict]:
+        """Retorna items de um gráfico."""
+        return await self._request("graphitem.get", {
+            "graphids": [graph_id],
+            "output": "extend",
+            "selectItems": ["itemid", "name", "key_", "units"],
+        })
+
+
+def _classify_sensors(items: list[dict]) -> dict:
+    """Classifica items do Zabbix em categorias estilo PRTG."""
+    categories = {
+        "ping": [],
+        "snmp_traffic": [],
+        "cpu_memory": [],
+        "interfaces": [],
+        "http": [],
+        "dns": [],
+        "port": [],
+        "olt_gpon": [],
+        "other": [],
+    }
+
+    for item in items:
+        key = item.get("key_", "").lower()
+        name = item.get("name", "").lower()
+
+        if "icmpping" in key or "ping" in key:
+            categories["ping"].append(item)
+        elif "net.if" in key or "ifhc" in key.lower() or "interface" in name:
+            categories["interfaces"].append(item)
+        elif any(k in key for k in ["system.cpu", "hrprocessor", "processor"]):
+            categories["cpu_memory"].append(item)
+        elif any(k in key for k in ["vm.memory", "hrstorage", "memory"]):
+            categories["cpu_memory"].append(item)
+        elif any(k in key for k in ["net.tcp", "tcp.port"]):
+            categories["port"].append(item)
+        elif any(k in key for k in ["net.dns", "dns"]):
+            categories["dns"].append(item)
+        elif any(k in key for k in ["web.test", "http"]):
+            categories["http"].append(item)
+        elif any(k in key for k in ["gpon", "ont", "onu", "olt", "xpon", "optical"]):
+            categories["olt_gpon"].append(item)
+        elif any(k in name for k in ["traffic", "bandwidth", "bits"]):
+            categories["snmp_traffic"].append(item)
+        else:
+            categories["other"].append(item)
+
+    return {k: v for k, v in categories.items() if v}
+
+
+def _host_status(available: str, max_severity: int) -> str:
+    """Calcula status estilo PRTG: up/down/warning/paused."""
+    if available == "2":
+        return "down"
+    if max_severity >= 4:
+        return "down_ack"
+    if max_severity >= 2:
+        return "warning"
+    if available == "1":
+        return "up"
+    return "unknown"
+
+
 class ZabbixAPIError(Exception):
     """Erro retornado pela Zabbix API."""
 
