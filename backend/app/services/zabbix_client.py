@@ -114,7 +114,6 @@ class ZabbixClient:
         params = {
             "output": ["eventid", "objectid", "name", "severity", "clock",
                        "r_eventid", "acknowledged", "suppressed"],
-            "selectHosts": ["hostid", "name"],
             "selectTags": "extend",
             "sortfield": ["severity", "clock"],
             "sortorder": ["DESC", "DESC"],
@@ -126,7 +125,24 @@ class ZabbixClient:
         if acknowledged is not None:
             params["acknowledged"] = acknowledged
 
-        return await self._request("problem.get", params)
+        problems = await self._request("problem.get", params)
+
+        # Buscar hosts via triggers (problem.get no Zabbix 7 não suporta selectHosts)
+        if problems:
+            trigger_ids = list(set(p["objectid"] for p in problems if p.get("objectid")))
+            if trigger_ids:
+                triggers = await self._request("trigger.get", {
+                    "triggerids": trigger_ids,
+                    "output": ["triggerid"],
+                    "selectHosts": ["hostid", "name"],
+                })
+                trigger_host_map = {
+                    t["triggerid"]: t.get("hosts", []) for t in triggers
+                }
+                for p in problems:
+                    p["hosts"] = trigger_host_map.get(p["objectid"], [])
+
+        return problems
 
     async def acknowledge_event(self, event_ids: list[str], message: str = "") -> dict:
         """Reconhece um ou mais eventos/alertas."""
