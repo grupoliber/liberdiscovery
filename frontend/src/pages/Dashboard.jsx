@@ -56,9 +56,9 @@ function getDefaultConfig(type) {
 function WidgetRenderer({ widget, dashStats, onConfigChange, lastRefresh, selectedHost, globalTimeRange, globalTimeRangeKey }) {
   const props = { config: widget.config, onConfigChange, lastRefresh, selectedHost };
   switch (widget.type) {
-    case 'stat_cards': return <StatCardsWidget stats={dashStats} />;
-    case 'pie': return <PieWidget config={widget.config} stats={dashStats} />;
-    case 'bar': return <BarWidget config={widget.config} stats={dashStats} />;
+    case 'stat_cards': return <StatCardsWidget data={dashStats} />;
+    case 'pie': return <PieWidget config={widget.config} data={dashStats} />;
+    case 'bar': return <BarWidget config={widget.config} data={dashStats} />;
     case 'alert_list': return <AlertListWidget config={widget.config} lastRefresh={lastRefresh} />;
     case 'metric_chart': return <MetricChartWidget {...props} globalTimeRange={globalTimeRange} globalTimeRangeKey={globalTimeRangeKey} />;
     case 'gauge': return <GaugeWidget {...props} />;
@@ -264,6 +264,8 @@ function DashboardContent() {
       }),
     };
     setTabs(newTabs);
+    // Dispatch resize event so Recharts ResponsiveContainer recalculates
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
   };
 
   const gridLayout = useMemo(() => {
@@ -419,6 +421,7 @@ function DashboardContent() {
           isDraggable={editMode}
           isResizable={editMode}
           onLayoutChange={handleLayoutChange}
+          onResizeStop={() => setTimeout(() => window.dispatchEvent(new Event('resize')), 150)}
           draggableHandle=".widget-drag-handle"
           compactType="vertical"
           margin={[12, 12]}
@@ -426,7 +429,7 @@ function DashboardContent() {
         >
           {currentTab.widgets.map(widget => (
             <div key={widget.id}
-              className={`bg-dark-800 border rounded-lg overflow-hidden flex flex-col ${
+              className={`bg-dark-800 border rounded-lg flex flex-col relative ${
                 editMode ? 'border-dark-500 ring-1 ring-dark-600 cursor-move' : 'border-dark-700'
               }`}>
               <div className={`flex items-center justify-between px-3 py-1.5 border-b border-dark-700 shrink-0 ${editMode ? 'widget-drag-handle cursor-grab active:cursor-grabbing bg-dark-750' : ''}`}>
@@ -453,7 +456,7 @@ function DashboardContent() {
                   )}
                 </div>
               </div>
-              <div className="flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-hidden rounded-b-lg">
                 <WidgetRenderer widget={widget} dashStats={dashStats}
                   onConfigChange={(cfg) => updateWidgetConfig(widget.id, cfg)}
                   lastRefresh={lastRefresh} selectedHost={selectedHost}
