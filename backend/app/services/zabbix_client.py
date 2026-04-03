@@ -67,7 +67,7 @@ class ZabbixClient:
         """Lista hosts monitorados."""
         params = {
             "output": ["hostid", "host", "name", "status", "description",
-                       "maintenance_status", "snmp_available", "available"],
+                       "maintenance_status"],
             "selectInterfaces": ["interfaceid", "ip", "port", "type"],
             "selectGroups": ["groupid", "name"],
             "selectParentTemplates": ["templateid", "name"],
@@ -250,15 +250,23 @@ class ZabbixClient:
     async def get_dashboard_stats(self) -> dict:
         """Retorna estatísticas gerais para o dashboard."""
         hosts = await self._request("host.get", {
-            "output": ["hostid", "status", "available"],
+            "output": ["hostid", "status"],
+            "selectInterfaces": ["interfaceid", "available"],
             "filter": {"status": 0},  # apenas monitorados
         })
 
         problems = await self.get_problems(severity_min=2)
 
         total_hosts = len(hosts)
-        hosts_up = sum(1 for h in hosts if h.get("available") == "1")
-        hosts_down = sum(1 for h in hosts if h.get("available") == "2")
+        # Zabbix 7.0: available está na interface, não no host
+        hosts_up = 0
+        hosts_down = 0
+        for h in hosts:
+            ifaces = h.get("interfaces", [])
+            if any(i.get("available") == "1" for i in ifaces):
+                hosts_up += 1
+            elif any(i.get("available") == "2" for i in ifaces):
+                hosts_down += 1
         hosts_unknown = total_hosts - hosts_up - hosts_down
 
         severity_counts = {}
@@ -289,7 +297,7 @@ class ZabbixClient:
         """Retorna árvore: Grupo > Host > Sensores (items + triggers)."""
         groups = await self._request("hostgroup.get", {
             "output": ["groupid", "name"],
-            "selectHosts": ["hostid", "name", "status", "available"],
+            "selectHosts": ["hostid", "name", "status"],
             "sortfield": "name",
             "filter": {"flags": 0},  # apenas grupos normais
         })
@@ -334,6 +342,22 @@ class ZabbixClient:
                 hid = item["hostid"]
                 items_by_host.setdefault(hid, []).append(item)
 
+            # Buscar interfaces para obter disponibilidade (Zabbix 7.0: available movido para interface)
+            interfaces = await self._request("hostinterface.get", {
+                "hostids": host_ids,
+                "output": ["hostid", "available"],
+            })
+            # Mapa de disponibilidade por host (1=available, 2=unavailable)
+            avail_by_host = {}
+            for iface in interfaces:
+                hid = iface["hostid"]
+                avail = iface.get("available", "0")
+                # Se qualquer interface está available, host está up
+                if avail == "1":
+                    avail_by_host[hid] = "1"
+                elif hid not in avail_by_host:
+                    avail_by_host[hid] = avail
+
             group_hosts = []
             for host in hosts:
                 hid = host["hostid"]
@@ -349,11 +373,13 @@ class ZabbixClient:
                     (int(t["priority"]) for t in active_triggers), default=0
                 )
 
+                host_available = avail_by_host.get(hid, "0")
+
                 group_hosts.append({
                     "hostid": hid,
                     "name": host["name"],
-                    "available": host.get("available", "0"),
-                    "status": _host_status(host.get("available", "0"), max_severity),
+                    "available": host_available,
+                    "status": _host_status(host_available, max_severity),
                     "sensor_count": len(host_items),
                     "problem_count": len(active_triggers),
                     "max_severity": max_severity,
@@ -430,9 +456,9 @@ class ZabbixClient:
         """Cria uma nova regra de descoberta de rede."""
         if checks is None:
             checks = [
-                {"type": 12},                                          # ICMP ping
-                {"type": 11, "ports": "161", "snmp_community": "public", "snmp_oid": "1.3.6.1.2.1.1.1.0"},  # SNMPv2 (sysDescr)
-                {"type": 9, "ports": "10050"},                         # Zabbix agent
+                {"type": 12, "key_": ""},                              # ICMP ping
+                {"type": 11, "key_": "1.3.6.1.2.1.1.1.0", "ports": "161", "snmp_community": "public"},  # SNMPv2 (sysDescr)
+                {"type": 9, "key_": "system.uname", "ports": "10050"},  # Zabbix agent
             ]
 
         return await self._request("drule.create", {
