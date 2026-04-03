@@ -1,8 +1,9 @@
-import { X, BarChart3, PieChart, Activity, Gauge, AlertTriangle, LayoutGrid, Hash, Calendar, Table } from 'lucide-react';
+import { X, BarChart3, PieChart, Activity, Gauge, AlertTriangle, LayoutGrid, Hash, Calendar, Table, Users } from 'lucide-react';
 
 const WIDGET_TYPES = [
   { type: 'stat_cards', label: 'Cards de Resumo', desc: 'Dispositivos, online, offline, alertas', icon: LayoutGrid, color: 'text-cyan-400' },
   { type: 'metric_chart', label: 'Grafico de Metricas', desc: 'Linha ou area com thresholds', icon: Activity, color: 'text-green-400' },
+  { type: 'pppoe', label: 'PPPoE Clientes', desc: 'Total de sessoes PPPoE ativas', icon: Users, color: 'text-emerald-400' },
   { type: 'gauge', label: 'Gauge (Velocimetro)', desc: 'Valor atual com zonas coloridas', icon: Gauge, color: 'text-blue-400' },
   { type: 'stat', label: 'Valor Unico', desc: 'Numero grande com sparkline', icon: Hash, color: 'text-purple-400' },
   { type: 'pie', label: 'Grafico de Pizza', desc: 'Status dos hosts ou alertas', icon: PieChart, color: 'text-pink-400' },

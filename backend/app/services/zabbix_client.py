@@ -651,6 +651,148 @@ class ZabbixClient:
         })
 
 
+    async def get_host_network_interfaces(self, host_id: str) -> list[dict]:
+        """
+        Retorna interfaces de rede de um host agrupadas por nome.
+        Inclui tráfego in/out, status operacional, velocidade.
+        Otimizado para Mikrotik e equipamentos SNMP.
+        """
+        # Buscar todos items de interface do host
+        items = await self._request("item.get", {
+            "hostids": [host_id],
+            "output": ["itemid", "name", "key_", "lastvalue", "units",
+                       "lastclock", "value_type", "status"],
+            "filter": {"status": 0},
+            "search": {"name": "Interface "},
+            "sortfield": "name",
+        })
+
+        # Agrupar items por interface (extrair index do SNMP)
+        interfaces = {}
+        for item in items:
+            key = item.get("key_", "")
+            name = item.get("name", "")
+
+            # Extrair index SNMP do key: net.if.in[ifHCInOctets.3] -> 3
+            idx = None
+            if "." in key and "[" in key:
+                inner = key.split("[")[1].rstrip("]") if "[" in key else ""
+                parts = inner.split(".")
+                if len(parts) >= 2 and parts[-1].isdigit():
+                    idx = parts[-1]
+
+            if idx is None:
+                continue
+
+            if idx not in interfaces:
+                # Extrair nome da interface do nome do item
+                # Formato: "Interface <nome>(<desc>): <metrica>"
+                iface_name = idx
+                if "Interface " in name:
+                    iface_part = name.split("Interface ")[1] if "Interface " in name else name
+                    # Pegar até ":"
+                    if ":" in iface_part:
+                        iface_name = iface_part.split(":")[0].strip()
+                interfaces[idx] = {
+                    "index": idx,
+                    "name": iface_name,
+                    "items": {},
+                }
+
+            # Classificar item pelo key_ que é mais confiável
+            lower_key = key.lower()
+            lower_name = name.lower()
+            if lower_key.startswith("net.if.in[ifhcinoctets"):
+                interfaces[idx]["items"]["in"] = item
+            elif lower_key.startswith("net.if.out[ifhcoutoctets"):
+                interfaces[idx]["items"]["out"] = item
+            elif lower_key.startswith("net.if.status[ifoperstatus"):
+                interfaces[idx]["items"]["status"] = item
+            elif lower_key.startswith("net.if.speed[ifhighspeed"):
+                interfaces[idx]["items"]["speed"] = item
+            elif lower_key.startswith("net.if.in.errors"):
+                interfaces[idx]["items"]["errors_in"] = item
+            elif lower_key.startswith("net.if.out.errors"):
+                interfaces[idx]["items"]["errors_out"] = item
+            elif "ifalias" in lower_key or "alias" in lower_name:
+                interfaces[idx]["items"]["alias"] = item
+            elif lower_key.startswith("net.if.type"):
+                interfaces[idx]["items"]["type"] = item
+
+        # Montar resultado simplificado
+        result = []
+        for idx, iface in interfaces.items():
+            itm = iface["items"]
+
+            # Traffic in bps (será convertido para Mbps no frontend)
+            traffic_in = float(itm["in"]["lastvalue"]) if "in" in itm and itm["in"].get("lastvalue") else 0
+            traffic_out = float(itm["out"]["lastvalue"]) if "out" in itm and itm["out"].get("lastvalue") else 0
+
+            # Status operacional: 1=up, 2=down, 3=testing
+            oper_status = itm["status"]["lastvalue"] if "status" in itm else "0"
+            try:
+                oper_status = int(oper_status)
+            except (ValueError, TypeError):
+                oper_status = 0
+
+            # Velocidade em bps
+            speed_val = itm["speed"]["lastvalue"] if "speed" in itm else "0"
+            try:
+                speed = float(speed_val)
+            except (ValueError, TypeError):
+                speed = 0
+
+            # Alias/descrição
+            alias = itm["alias"]["lastvalue"] if "alias" in itm else ""
+
+            result.append({
+                "index": idx,
+                "name": iface["name"],
+                "alias": alias,
+                "oper_status": oper_status,
+                "oper_status_text": {1: "up", 2: "down", 3: "testing", 4: "unknown", 5: "dormant", 6: "notPresent", 7: "lowerLayerDown"}.get(oper_status, "unknown"),
+                "speed_bps": speed,
+                "traffic_in_bps": traffic_in,
+                "traffic_out_bps": traffic_out,
+                "errors_in": int(float(itm["errors_in"]["lastvalue"])) if "errors_in" in itm and itm["errors_in"].get("lastvalue") else 0,
+                "errors_out": int(float(itm["errors_out"]["lastvalue"])) if "errors_out" in itm and itm["errors_out"].get("lastvalue") else 0,
+                "item_ids": {
+                    "in": itm["in"]["itemid"] if "in" in itm else None,
+                    "out": itm["out"]["itemid"] if "out" in itm else None,
+                    "status": itm["status"]["itemid"] if "status" in itm else None,
+                    "speed": itm["speed"]["itemid"] if "speed" in itm else None,
+                },
+                "last_update": itm["in"].get("lastclock", "0") if "in" in itm else "0",
+            })
+
+        # Ordenar: up primeiro, depois por tráfego total desc
+        result.sort(key=lambda x: (0 if x["oper_status"] == 1 else 1, -(x["traffic_in_bps"] + x["traffic_out_bps"])))
+
+        return result
+
+    async def create_interface_trigger(
+        self,
+        host_id: str,
+        description: str,
+        expression: str,
+        priority: int = 3,
+        tags: list[dict] | None = None,
+    ) -> dict:
+        """Cria um trigger para monitoramento de interface."""
+        params = {
+            "description": description,
+            "expression": expression,
+            "priority": priority,
+            "status": 0,
+            "type": 0,
+            "manual_close": 1,
+        }
+        if tags:
+            params["tags"] = tags
+        return await self._request("trigger.create", params)
+
+
+
 def _classify_sensors(items: list[dict]) -> dict:
     """Classifica items do Zabbix em categorias estilo PRTG."""
     categories = {

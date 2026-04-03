@@ -6,6 +6,9 @@ Endpoints para gerenciamento completo de hosts/dispositivos via Zabbix.
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
+import subprocess
+import asyncio
+
 from app.services.zabbix_client import zabbix, ZabbixAPIError
 from app.services.cache import cache
 
@@ -131,6 +134,177 @@ async def get_device(host_id: str):
 async def get_device_interfaces(host_id: str):
     """Lista interfaces de um dispositivo."""
     return await zabbix.get_host_interfaces(host_id)
+
+
+
+
+@router.get("/devices/{host_id}/interfaces-detail")
+async def get_device_interfaces_detail(host_id: str):
+    """
+    Retorna interfaces de rede agrupadas por nome com tráfego em bps,
+    status operacional, velocidade, erros e item IDs para graficos.
+    Otimizado para Mikrotik e equipamentos SNMP.
+    """
+    try:
+        interfaces = await zabbix.get_host_network_interfaces(host_id)
+        return interfaces
+    except ZabbixAPIError as e:
+        raise HTTPException(status_code=400, detail=f"Zabbix: {e.message} - {e.data}")
+
+
+class InterfaceTriggerInput(BaseModel):
+    interface_name: str
+    trigger_type: str  # "link_down", "link_up", "sfp_signal"
+    item_id: str  # item ID para compor a expressao
+    host_name: str  # nome tecnico do host para expressao
+    threshold: float | None = None  # para sfp_signal, valor em dBm
+    priority: int = 3  # 1=info, 2=warning, 3=average, 4=high, 5=disaster
+
+
+@router.post("/devices/{host_id}/interfaces-alert")
+async def create_interface_alert(host_id: str, data: InterfaceTriggerInput):
+    """
+    Cria trigger/alerta para monitoramento de interface:
+    - link_down: alerta quando interface fica down
+    - sfp_signal: alerta quando sinal optico ultrapassa threshold
+    """
+    try:
+        if data.trigger_type == "link_down":
+            description = f"Interface {data.interface_name} is DOWN on {{{data.host_name}}}"
+            # ifOperStatus: 1=up, 2=down
+            expression = f"last(/{data.host_name}/{data.item_id})=2"
+            # Precisamos usar o key_ do item, não o itemid
+            # Buscar o key_ do item
+            items = await zabbix._request("item.get", {
+                "itemids": [data.item_id],
+                "output": ["key_"],
+            })
+            if not items:
+                raise HTTPException(status_code=404, detail="Item não encontrado")
+            item_key = items[0]["key_"]
+            expression = f"last(/{data.host_name}/{item_key})=2"
+
+        elif data.trigger_type == "sfp_signal":
+            if data.threshold is None:
+                raise HTTPException(status_code=400, detail="Threshold obrigatório para sfp_signal")
+            items = await zabbix._request("item.get", {
+                "itemids": [data.item_id],
+                "output": ["key_"],
+            })
+            if not items:
+                raise HTTPException(status_code=404, detail="Item não encontrado")
+            item_key = items[0]["key_"]
+            description = f"SFP signal on {data.interface_name} above {data.threshold} dBm on {{{data.host_name}}}"
+            expression = f"last(/{data.host_name}/{item_key})>{data.threshold}"
+
+        else:
+            raise HTTPException(status_code=400, detail=f"Tipo de trigger desconhecido: {data.trigger_type}")
+
+        result = await zabbix.create_interface_trigger(
+            host_id=host_id,
+            description=description,
+            expression=expression,
+            priority=data.priority,
+            tags=[
+                {"tag": "interface", "value": data.interface_name},
+                {"tag": "trigger_type", "value": data.trigger_type},
+                {"tag": "source", "value": "liberdiscovery"},
+            ],
+        )
+        await cache.flush_pattern(f"devices:{host_id}*")
+        return {"status": "ok", "triggerids": result.get("triggerids", [])}
+
+    except ZabbixAPIError as e:
+        raise HTTPException(status_code=400, detail=f"Zabbix: {e.message} - {e.data}")
+
+
+
+
+@router.get("/devices/{host_id}/pppoe-stats")
+async def get_pppoe_stats(host_id: str):
+    """
+    Retorna estatísticas de sessões PPPoE de um roteador Huawei NE40.
+    Faz SNMP walk na MIB hwBRAS para contar sessões ativas.
+    """
+    try:
+        # Buscar IP e community SNMP do host
+        interfaces = await zabbix.get_host_interfaces(host_id)
+        snmp_iface = next((i for i in interfaces if i.get("type") == "2"), None)
+        if not snmp_iface:
+            raise HTTPException(status_code=400, detail="Host não possui interface SNMP")
+
+        ip = snmp_iface["ip"]
+        community = snmp_iface.get("details", {}).get("community", "public")
+
+        # OID base: hwBRAS access user session table
+        base_oid = "1.3.6.1.4.1.2011.5.25.40.12.1.2.1.1"
+
+        # Executar snmpwalk para contar sessões (em thread separada)
+        def do_snmpwalk():
+            try:
+                result = subprocess.run(
+                    ["snmpwalk", "-v2c", "-c", community, "-t", "20", ip, base_oid],
+                    capture_output=True, text=True, timeout=30
+                )
+                if result.returncode != 0:
+                    return None, result.stderr
+                lines = [l for l in result.stdout.strip().splitlines() if l]
+                if not lines:
+                    return {"total": 0, "by_interface": {}, "interfaces": {}}, None
+
+                # Contar por interface index
+                by_iface = {}
+                for line in lines:
+                    # Format: iso.3.6.1.4.1.2011.5.25.40.12.1.2.1.1.<iface_idx>.<session_id>.<x> = INTEGER: <val>
+                    parts = line.split("=")[0].strip().split(".")
+                    if len(parts) > 15:
+                        iface_idx = parts[15]
+                        by_iface[iface_idx] = by_iface.get(iface_idx, 0) + 1
+
+                return {
+                    "total": len(lines),
+                    "by_interface": by_iface,
+                }, None
+            except subprocess.TimeoutExpired:
+                return None, "SNMP timeout"
+            except Exception as e:
+                return None, str(e)
+
+        loop = asyncio.get_event_loop()
+        data, error = await loop.run_in_executor(None, do_snmpwalk)
+
+        if error:
+            # Fallback: tentar via OID de dominio (.40.15)
+            raise HTTPException(status_code=500, detail=f"Erro SNMP: {error}")
+
+        # Mapear interface indexes para nomes
+        try:
+            net_ifaces = await zabbix.get_host_network_interfaces(host_id)
+            iface_names = {i["index"]: i["name"] for i in net_ifaces}
+        except Exception:
+            iface_names = {}
+
+        # Enriquecer com nomes
+        by_interface_named = {}
+        for idx, count in data["by_interface"].items():
+            name = iface_names.get(idx, f"Interface {idx}")
+            by_interface_named[name] = {
+                "index": idx,
+                "sessions": count,
+            }
+
+        return {
+            "total_sessions": data["total"],
+            "by_interface": by_interface_named,
+            "host_ip": ip,
+        }
+
+    except HTTPException:
+        raise
+    except ZabbixAPIError as e:
+        raise HTTPException(status_code=400, detail=f"Zabbix: {e.message} - {e.data}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
 
 
 # ========== Create Endpoints ==========

@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, Edit3, Save, Trash2, GripVertical, LayoutDashboard, Maximize2, Minimize2 } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Responsive, WidthProvider } from 'react-grid-layout';
+import 'react-grid-layout/css/styles.css';
+import { Plus, X, Edit3, Save, Trash2, LayoutDashboard, Maximize2, Minimize2, GripVertical } from 'lucide-react';
 import { DashboardProvider, useDashboard } from '../contexts/DashboardContext';
 import DashboardToolbar from '../components/DashboardToolbar';
 import StatCardsWidget from '../components/widgets/StatCardsWidget';
@@ -11,22 +13,61 @@ import GaugeWidget from '../components/widgets/GaugeWidget';
 import StatWidget from '../components/widgets/StatWidget';
 import StateTimelineWidget from '../components/widgets/StateTimelineWidget';
 import TableWidget from '../components/widgets/TableWidget';
+import PPPoEWidget from '../components/widgets/PPPoEWidget';
 import AddWidgetModal from '../components/widgets/AddWidgetModal';
 
-const WIDGET_SIZES = {
-  stat_cards: { w: 12, h: 1 },
-  pie: { w: 4, h: 2 },
-  bar: { w: 4, h: 2 },
-  alert_list: { w: 4, h: 2 },
-  metric_chart: { w: 6, h: 2 },
-  gauge: { w: 3, h: 2 },
-  stat: { w: 3, h: 2 },
-  state_timeline: { w: 12, h: 2 },
-  table: { w: 12, h: 3 },
+const ResponsiveGridLayout = WidthProvider(Responsive);
+
+const DEFAULT_SIZES = {
+  stat_cards: { w: 12, h: 3, minW: 6, minH: 2 },
+  pie: { w: 4, h: 7, minW: 3, minH: 4 },
+  bar: { w: 4, h: 7, minW: 3, minH: 4 },
+  alert_list: { w: 4, h: 7, minW: 3, minH: 4 },
+  metric_chart: { w: 6, h: 7, minW: 3, minH: 4 },
+  gauge: { w: 3, h: 4, minW: 2, minH: 3 },
+  stat: { w: 3, h: 4, minW: 2, minH: 2 },
+  state_timeline: { w: 12, h: 4, minW: 6, minH: 3 },
+  table: { w: 12, h: 6, minW: 6, minH: 4 },
+  pppoe: { w: 4, h: 7, minW: 3, minH: 4 },
 };
 
 function generateId() {
   return 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function getDefaultTitle(type) {
+  const titles = {
+    stat_cards: 'Resumo do Sistema', pie: 'Status dos Hosts', bar: 'Alertas por Severidade',
+    alert_list: 'Alertas Recentes', metric_chart: 'Grafico de Metricas', gauge: 'Gauge',
+    stat: 'Valor', state_timeline: 'Timeline', table: 'Tabela', pppoe: 'PPPoE Clientes',
+  };
+  return titles[type] || 'Widget';
+}
+
+function getDefaultConfig(type) {
+  const configs = {
+    pie: { source: 'host_status' }, bar: { source: 'severity' },
+    alert_list: { limit: 10 }, metric_chart: { chart_type: 'area', time_range: 'global', thresholds: [] },
+    pppoe: { show_breakdown: true },
+  };
+  return configs[type] || {};
+}
+
+function WidgetRenderer({ widget, dashStats, onConfigChange, lastRefresh, selectedHost, globalTimeRange, globalTimeRangeKey }) {
+  const props = { config: widget.config, onConfigChange, lastRefresh, selectedHost };
+  switch (widget.type) {
+    case 'stat_cards': return <StatCardsWidget stats={dashStats} />;
+    case 'pie': return <PieWidget config={widget.config} stats={dashStats} />;
+    case 'bar': return <BarWidget config={widget.config} stats={dashStats} />;
+    case 'alert_list': return <AlertListWidget config={widget.config} lastRefresh={lastRefresh} />;
+    case 'metric_chart': return <MetricChartWidget {...props} globalTimeRange={globalTimeRange} globalTimeRangeKey={globalTimeRangeKey} />;
+    case 'gauge': return <GaugeWidget {...props} />;
+    case 'stat': return <StatWidget {...props} />;
+    case 'state_timeline': return <StateTimelineWidget {...props} />;
+    case 'table': return <TableWidget {...props} />;
+    case 'pppoe': return <PPPoEWidget {...props} />;
+    default: return <div className="flex items-center justify-center h-full text-dark-400 text-xs">Widget desconhecido: {widget.type}</div>;
+  }
 }
 
 function DashboardContent() {
@@ -40,18 +81,31 @@ function DashboardContent() {
   const [dashStats, setDashStats] = useState(null);
   const [saving, setSaving] = useState(false);
   const [fullscreenWidget, setFullscreenWidget] = useState(null);
+  const [editingTabName, setEditingTabName] = useState(null);
+  const [editTabValue, setEditTabValue] = useState('');
 
-  // Carregar config salva
   useEffect(() => {
     fetch('/api/v1/dashboard/config')
       .then(r => r.json())
       .then(data => {
-        if (data.tabs?.length) setTabs(data.tabs);
+        if (data.tabs?.length) {
+          // Migrate old widgets without layout info
+          const migrated = data.tabs.map(tab => ({
+            ...tab,
+            widgets: (tab.widgets || []).map((w, i) => ({
+              ...w,
+              x: w.x ?? ((i * 6) % 12),
+              y: w.y ?? (Math.floor(i / 2) * 5),
+              w: w.w ?? (DEFAULT_SIZES[w.type]?.w || 6),
+              h: (w.h && w.h > 4) ? w.h : (DEFAULT_SIZES[w.type]?.h || 7),
+            })),
+          }));
+          setTabs(migrated);
+        }
       })
       .catch(() => {});
   }, []);
 
-  // Carregar stats do dashboard
   const loadStats = useCallback(async () => {
     try {
       const res = await fetch('/api/v1/dashboard/stats');
@@ -59,13 +113,10 @@ function DashboardContent() {
     } catch {}
   }, []);
 
-  useEffect(() => {
-    loadStats();
-  }, [loadStats, lastRefresh]);
+  useEffect(() => { loadStats(); }, [loadStats, lastRefresh]);
 
   const currentTab = tabs[activeTab];
 
-  // Salvar config
   const saveConfig = async () => {
     setSaving(true);
     try {
@@ -79,7 +130,6 @@ function DashboardContent() {
     setEditMode(false);
   };
 
-  // Adicionar aba
   const addTab = () => {
     if (!newTabName.trim()) return;
     setTabs([...tabs, { id: generateId(), name: newTabName.trim(), widgets: [] }]);
@@ -88,7 +138,6 @@ function DashboardContent() {
     setShowAddTab(false);
   };
 
-  // Remover aba
   const removeTab = (idx) => {
     if (tabs.length <= 1) return;
     const newTabs = tabs.filter((_, i) => i !== idx);
@@ -96,26 +145,31 @@ function DashboardContent() {
     if (activeTab >= newTabs.length) setActiveTab(newTabs.length - 1);
   };
 
-  // Adicionar widget
   const addWidget = (type) => {
-    const size = WIDGET_SIZES[type] || { w: 6, h: 2 };
+    const size = DEFAULT_SIZES[type] || { w: 6, h: 5 };
+    const widgets = currentTab?.widgets || [];
+    // Find next available Y position
+    let maxY = 0;
+    widgets.forEach(w => { if ((w.y || 0) + (w.h || 5) > maxY) maxY = (w.y || 0) + (w.h || 5); });
     const widget = {
       id: generateId(),
       type,
       title: getDefaultTitle(type),
       config: getDefaultConfig(type),
-      ...size,
+      x: 0,
+      y: maxY,
+      w: size.w,
+      h: size.h,
     };
     const newTabs = [...tabs];
     newTabs[activeTab] = {
       ...newTabs[activeTab],
-      widgets: [...(newTabs[activeTab].widgets || []), widget],
+      widgets: [...widgets, widget],
     };
     setTabs(newTabs);
     setShowAddWidget(false);
   };
 
-  // Remover widget
   const removeWidget = (widgetId) => {
     const newTabs = [...tabs];
     newTabs[activeTab] = {
@@ -125,7 +179,6 @@ function DashboardContent() {
     setTabs(newTabs);
   };
 
-  // Atualizar config do widget
   const updateWidgetConfig = (widgetId, newConfig) => {
     const newTabs = [...tabs];
     newTabs[activeTab] = {
@@ -137,7 +190,6 @@ function DashboardContent() {
     setTabs(newTabs);
   };
 
-  // Atualizar titulo
   const updateWidgetTitle = (widgetId, title) => {
     const newTabs = [...tabs];
     newTabs[activeTab] = {
@@ -149,21 +201,37 @@ function DashboardContent() {
     setTabs(newTabs);
   };
 
-  // Alterar tamanho
-  const cycleWidgetSize = (widgetId) => {
-    const sizes = [3, 4, 6, 8, 12];
+  // Handle layout changes from react-grid-layout
+  const handleLayoutChange = (layout) => {
+    if (!editMode || !currentTab) return;
     const newTabs = [...tabs];
     newTabs[activeTab] = {
       ...newTabs[activeTab],
       widgets: newTabs[activeTab].widgets.map(w => {
-        if (w.id !== widgetId) return w;
-        const curIdx = sizes.indexOf(w.w);
-        const nextIdx = (curIdx + 1) % sizes.length;
-        return { ...w, w: sizes[nextIdx] };
+        const item = layout.find(l => l.i === w.id);
+        if (item) {
+          return { ...w, x: item.x, y: item.y, w: item.w, h: item.h };
+        }
+        return w;
       }),
     };
     setTabs(newTabs);
   };
+
+  // Build layout for react-grid-layout
+  const gridLayout = useMemo(() => {
+    if (!currentTab?.widgets) return [];
+    return currentTab.widgets.map(w => ({
+      i: w.id,
+      x: w.x ?? 0,
+      y: w.y ?? 0,
+      w: w.w ?? 6,
+      h: w.h ?? 5,
+      minW: DEFAULT_SIZES[w.type]?.minW || 2,
+      minH: DEFAULT_SIZES[w.type]?.minH || 2,
+      static: !editMode,
+    }));
+  }, [currentTab, editMode]);
 
   // Fullscreen overlay
   if (fullscreenWidget) {
@@ -176,15 +244,10 @@ function DashboardContent() {
           </button>
         </div>
         <div className="flex-1 min-h-0 p-2">
-          <WidgetRenderer
-            widget={fullscreenWidget}
-            dashStats={dashStats}
-            onConfigChange={() => {}}
-            lastRefresh={lastRefresh}
-            selectedHost={selectedHost}
-            globalTimeRange={timeRange}
-            globalTimeRangeKey={timeRangeKey}
-          />
+          <WidgetRenderer widget={fullscreenWidget} dashStats={dashStats}
+            onConfigChange={(cfg) => updateWidgetConfig(fullscreenWidget.id, cfg)}
+            lastRefresh={lastRefresh} selectedHost={selectedHost}
+            globalTimeRange={timeRange} globalTimeRangeKey={timeRangeKey} />
         </div>
       </div>
     );
@@ -209,7 +272,7 @@ function DashboardContent() {
                 className="flex items-center gap-1.5 bg-accent-blue text-white px-3 py-1.5 rounded text-xs hover:opacity-90 disabled:opacity-50">
                 <Save size={14} /> {saving ? 'Salvando...' : 'Salvar'}
               </button>
-              <button onClick={() => setEditMode(false)}
+              <button onClick={() => { setEditMode(false); /* reload to revert unsaved */ fetch('/api/v1/dashboard/config').then(r=>r.json()).then(d => { if(d.tabs?.length) setTabs(d.tabs); }); }}
                 className="flex items-center gap-1.5 bg-dark-700 text-dark-200 px-3 py-1.5 rounded text-xs hover:bg-dark-600">
                 <X size={14} /> Cancelar
               </button>
@@ -223,7 +286,6 @@ function DashboardContent() {
         </div>
       </div>
 
-      {/* Toolbar global (time range, auto-refresh, host filter) */}
       <DashboardToolbar />
 
       {/* Tabs */}
@@ -231,13 +293,20 @@ function DashboardContent() {
         {tabs.map((tab, idx) => (
           <div key={tab.id}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-t text-sm cursor-pointer transition-colors shrink-0 ${
-              activeTab === idx
-                ? 'bg-dark-800 text-accent-green border-b-2 border-accent-green'
-                : 'text-dark-300 hover:bg-dark-800 hover:text-dark-100'
-            }`}>
-            <span onClick={() => setActiveTab(idx)}>{tab.name}</span>
+              activeTab === idx ? 'bg-dark-700 text-accent-green border-b-2 border-accent-green' : 'text-dark-300 hover:text-dark-100 hover:bg-dark-800'
+            }`}
+            onClick={() => setActiveTab(idx)}>
+            {editMode && editingTabName === idx ? (
+              <input type="text" value={editTabValue} onChange={e => setEditTabValue(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { const nt = [...tabs]; nt[idx] = { ...nt[idx], name: editTabValue.trim() || tab.name }; setTabs(nt); setEditingTabName(null); } if (e.key === 'Escape') setEditingTabName(null); }}
+                onBlur={() => { const nt = [...tabs]; nt[idx] = { ...nt[idx], name: editTabValue.trim() || tab.name }; setTabs(nt); setEditingTabName(null); }}
+                className="bg-dark-900 border border-accent-green rounded px-1.5 py-0.5 text-xs text-gray-100 w-24"
+                autoFocus onClick={e => e.stopPropagation()} />
+            ) : (
+              <span onDoubleClick={() => { if (editMode) { setEditingTabName(idx); setEditTabValue(tab.name); } }}>{tab.name}</span>
+            )}
             {editMode && tabs.length > 1 && (
-              <button onClick={() => removeTab(idx)} className="text-dark-500 hover:text-red-400 ml-1">
+              <button onClick={e => { e.stopPropagation(); removeTab(idx); }} className="text-dark-500 hover:text-red-400 ml-1">
                 <X size={12} />
               </button>
             )}
@@ -245,128 +314,103 @@ function DashboardContent() {
         ))}
         {editMode && (
           showAddTab ? (
-            <div className="flex items-center gap-1 ml-2">
-              <input type="text" value={newTabName} onChange={(e) => setNewTabName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && addTab()} placeholder="Nome da aba"
-                className="bg-dark-800 border border-dark-600 rounded px-2 py-1 text-xs text-gray-100 w-28" autoFocus />
-              <button onClick={addTab} className="text-accent-green text-xs">OK</button>
-              <button onClick={() => setShowAddTab(false)} className="text-dark-400 text-xs"><X size={12} /></button>
+            <div className="flex items-center gap-1 px-2">
+              <input type="text" value={newTabName} onChange={e => setNewTabName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') addTab(); if (e.key === 'Escape') setShowAddTab(false); }}
+                className="bg-dark-800 border border-dark-600 rounded px-2 py-1 text-xs text-gray-100 w-28"
+                placeholder="Nome da aba" autoFocus />
+              <button onClick={addTab} className="text-accent-green text-xs hover:underline">OK</button>
+              <button onClick={() => setShowAddTab(false)} className="text-dark-500 hover:text-dark-300"><X size={12} /></button>
             </div>
           ) : (
             <button onClick={() => setShowAddTab(true)}
-              className="flex items-center gap-1 text-dark-400 hover:text-dark-200 text-xs ml-2 shrink-0">
+              className="flex items-center gap-1 px-3 py-2 text-dark-400 hover:text-accent-green text-sm shrink-0">
               <Plus size={14} /> Aba
             </button>
           )
         )}
       </div>
 
+      {/* Edit mode hint */}
+      {editMode && (
+        <div className="bg-dark-800 border border-dark-600 rounded-lg px-4 py-2 mb-3 flex items-center gap-2 text-xs text-dark-300">
+          <GripVertical size={14} className="text-accent-green" />
+          <span>Modo edicao: <b className="text-dark-100">arraste</b> os widgets para reposicionar e <b className="text-dark-100">redimensione</b> pelas bordas. Duplo-clique no nome da aba para renomear.</span>
+        </div>
+      )}
+
       {/* Widget Grid */}
-      {currentTab ? (
-        <div className="grid grid-cols-12 gap-4 auto-rows-[140px]">
-          {(currentTab.widgets || []).map((widget) => (
+      {currentTab?.widgets?.length > 0 ? (
+        <ResponsiveGridLayout
+          className="layout"
+          layouts={{ lg: gridLayout }}
+          breakpoints={{ lg: 1200, md: 996, sm: 768 }}
+          cols={{ lg: 12, md: 12, sm: 6 }}
+          rowHeight={50}
+          isDraggable={editMode}
+          isResizable={editMode}
+          onLayoutChange={handleLayoutChange}
+          draggableHandle=".widget-drag-handle"
+          compactType="vertical"
+          margin={[12, 12]}
+          useCSSTransforms={true}
+        >
+          {currentTab.widgets.map(widget => (
             <div key={widget.id}
-              className="bg-dark-900 border border-dark-700 rounded-lg overflow-hidden flex flex-col group"
-              style={{
-                gridColumn: `span ${Math.min(widget.w || 6, 12)}`,
-                gridRow: `span ${widget.h || 2}`,
-              }}>
-              {/* Widget Header */}
-              <div className="flex items-center justify-between px-3 py-1.5 border-b border-dark-700 shrink-0">
-                {editMode ? (
-                  <input type="text" value={widget.title}
-                    onChange={(e) => updateWidgetTitle(widget.id, e.target.value)}
-                    className="bg-transparent text-xs font-semibold text-dark-200 outline-none border-b border-dashed border-dark-500 w-full mr-2" />
-                ) : (
-                  <span className="text-xs font-semibold text-dark-200">{widget.title}</span>
-                )}
-                <div className="flex items-center gap-1 shrink-0">
-                  {/* Fullscreen button (always visible on hover) */}
+              className={`bg-dark-800 border rounded-lg overflow-hidden flex flex-col ${
+                editMode ? 'border-dark-500 ring-1 ring-dark-600 cursor-move' : 'border-dark-700'
+              }`}>
+              {/* Widget header */}
+              <div className={`flex items-center justify-between px-3 py-1.5 border-b border-dark-700 shrink-0 ${editMode ? 'widget-drag-handle cursor-grab active:cursor-grabbing bg-dark-750' : ''}`}>
+                <div className="flex items-center gap-2 min-w-0">
+                  {editMode && <GripVertical size={12} className="text-dark-500 shrink-0" />}
+                  {editMode ? (
+                    <input type="text" value={widget.title} onChange={e => updateWidgetTitle(widget.id, e.target.value)}
+                      className="bg-transparent border-b border-dark-600 focus:border-accent-green text-xs font-medium text-dark-100 px-0 py-0.5 w-full outline-none"
+                      onClick={e => e.stopPropagation()} />
+                  ) : (
+                    <span className="text-xs font-medium text-dark-200 truncate">{widget.title}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 shrink-0 ml-2">
                   {!editMode && (
-                    <button onClick={() => setFullscreenWidget(widget)}
-                      className="text-dark-500 hover:text-dark-200 opacity-0 group-hover:opacity-100 transition-opacity"
-                      title="Tela cheia">
+                    <button onClick={() => setFullscreenWidget(widget)} className="text-dark-500 hover:text-dark-200 p-0.5" title="Tela cheia">
                       <Maximize2 size={12} />
                     </button>
                   )}
                   {editMode && (
-                    <>
-                      <button onClick={() => cycleWidgetSize(widget.id)}
-                        className="text-dark-400 hover:text-dark-200" title="Alterar tamanho">
-                        <GripVertical size={12} />
-                      </button>
-                      <button onClick={() => removeWidget(widget.id)}
-                        className="text-dark-400 hover:text-red-400">
-                        <Trash2 size={12} />
-                      </button>
-                    </>
+                    <button onClick={() => removeWidget(widget.id)} className="text-dark-500 hover:text-red-400 p-0.5" title="Remover">
+                      <Trash2 size={12} />
+                    </button>
                   )}
                 </div>
               </div>
-              {/* Widget Content */}
-              <div className="flex-1 min-h-0 p-1">
+              {/* Widget body */}
+              <div className="flex-1 min-h-0 overflow-hidden">
                 <WidgetRenderer widget={widget} dashStats={dashStats}
-                  onConfigChange={(newConfig) => updateWidgetConfig(widget.id, newConfig)}
+                  onConfigChange={(cfg) => updateWidgetConfig(widget.id, cfg)}
                   lastRefresh={lastRefresh} selectedHost={selectedHost}
                   globalTimeRange={timeRange} globalTimeRangeKey={timeRangeKey} />
               </div>
             </div>
           ))}
-          {(!currentTab.widgets || currentTab.widgets.length === 0) && (
-            <div className="col-span-12 row-span-2 flex items-center justify-center bg-dark-900 border border-dashed border-dark-600 rounded-lg">
-              <div className="text-center">
-                <LayoutDashboard size={48} className="mx-auto mb-3 text-dark-600" />
-                <p className="text-dark-400 text-sm">Nenhum widget nesta aba.</p>
-                <button onClick={() => { setEditMode(true); setShowAddWidget(true); }}
-                  className="mt-2 text-accent-green text-xs hover:underline">+ Adicionar widget</button>
-              </div>
-            </div>
-          )}
-        </div>
+        </ResponsiveGridLayout>
       ) : (
-        <div className="flex items-center justify-center h-64 text-dark-400">
-          <p>Nenhuma aba configurada. Clique em "Editar" para comecar.</p>
+        <div className="text-center py-20 text-dark-400">
+          <LayoutDashboard size={48} className="mx-auto mb-4 opacity-30" />
+          <p className="text-sm">Nenhum widget nesta aba</p>
+          {editMode && (
+            <button onClick={() => setShowAddWidget(true)}
+              className="mt-3 bg-accent-green text-white px-4 py-2 rounded text-sm hover:opacity-90">
+              <Plus size={14} className="inline mr-1" /> Adicionar Widget
+            </button>
+          )}
         </div>
       )}
 
       {showAddWidget && <AddWidgetModal onAdd={addWidget} onClose={() => setShowAddWidget(false)} />}
     </div>
   );
-}
-
-function WidgetRenderer({ widget, dashStats, onConfigChange, lastRefresh, selectedHost, globalTimeRange, globalTimeRangeKey }) {
-  const commonProps = { config: widget.config, onConfigChange, lastRefresh, selectedHost, globalTimeRange, globalTimeRangeKey };
-  switch (widget.type) {
-    case 'stat_cards': return <StatCardsWidget data={dashStats} />;
-    case 'pie': return <PieWidget data={dashStats} config={widget.config} />;
-    case 'bar': return <BarWidget data={dashStats} config={widget.config} />;
-    case 'alert_list': return <AlertListWidget {...commonProps} />;
-    case 'metric_chart': return <MetricChartWidget {...commonProps} />;
-    case 'gauge': return <GaugeWidget {...commonProps} />;
-    case 'stat': return <StatWidget {...commonProps} />;
-    case 'state_timeline': return <StateTimelineWidget {...commonProps} />;
-    case 'table': return <TableWidget {...commonProps} />;
-    default: return <div className="flex items-center justify-center h-full text-dark-400 text-xs">Widget desconhecido: {widget.type}</div>;
-  }
-}
-
-function getDefaultTitle(type) {
-  const titles = {
-    stat_cards: 'Resumo do Sistema', pie: 'Status dos Hosts', bar: 'Alertas por Severidade',
-    alert_list: 'Alertas Recentes', metric_chart: 'Grafico de Metricas', gauge: 'Gauge',
-    stat: 'Valor', state_timeline: 'Timeline de Status', table: 'Tabela de Dados',
-  };
-  return titles[type] || 'Novo Widget';
-}
-
-function getDefaultConfig(type) {
-  const configs = {
-    stat_cards: {}, pie: { source: 'host_status' }, bar: { source: 'severity' },
-    alert_list: { limit: 10 }, metric_chart: { chart_type: 'line', time_range: 'global' },
-    gauge: { min: 0, max: 100, unit: '%' }, stat: { show_sparkline: true },
-    state_timeline: {}, table: { source: 'hosts' },
-  };
-  return configs[type] || {};
 }
 
 export default function Dashboard() {

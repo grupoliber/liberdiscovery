@@ -61,6 +61,14 @@ export const deleteDeviceInterface = (hostId, interfaceId) =>
 export const linkTemplates = (hostId, templateIds) =>
   request(`/devices/${hostId}/templates`, { method: 'PUT', body: JSON.stringify(templateIds) });
 
+
+// === Interfaces de Rede (Detalhadas) ===
+export const getDevicePPPoEStats = (hostId) => request(`/devices/${hostId}/pppoe-stats`);
+
+export const getDeviceInterfacesDetail = (hostId) => request(`/devices/${hostId}/interfaces-detail`);
+
+export const createInterfaceAlert = (hostId, data) =>
+  request(`/devices/${hostId}/interfaces-alert`, { method: 'POST', body: JSON.stringify(data) });
 // === Alertas ===
 export const getAlerts = (severityMin = 0, acknowledged = null, limit = 100) => {
   const params = new URLSearchParams();
