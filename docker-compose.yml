@@ -73,6 +73,7 @@ services:
       LICENSE_KEY: ${LICENSE_KEY:-}
     volumes:
       - ./backend/app:/app/app
+      - backend_data:/app/data
     restart: unless-stopped
 
   # ============================================
@@ -100,3 +101,4 @@ services:
 volumes:
   zabbix_pg_data:
   redis_data:
+  backend_data:
