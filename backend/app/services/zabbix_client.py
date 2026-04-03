@@ -32,8 +32,8 @@ class ZabbixClient:
             await self._request("user.logout", [])
             self.auth_token = None
 
-    async def _request(self, method: str, params: Any, auth: bool = True) -> Any:
-        """Executa uma chamada JSON-RPC na Zabbix API."""
+    async def _request(self, method: str, params: Any, auth: bool = True, _retry: bool = True) -> Any:
+        """Executa uma chamada JSON-RPC na Zabbix API com auto re-login."""
         self._request_id += 1
 
         payload = {
@@ -53,10 +53,23 @@ class ZabbixClient:
 
         if "error" in data:
             error = data["error"]
+            error_data = error.get("data", "")
+
+            # Auto re-login on session expiry
+            if _retry and auth and ("re-login" in str(error_data).lower() or "session" in str(error_data).lower()):
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning("Zabbix session expired, re-logging in...")
+                try:
+                    await self.login()
+                    return await self._request(method, params, auth=auth, _retry=False)
+                except Exception as e:
+                    logger.error("Re-login failed: %s", str(e))
+
             raise ZabbixAPIError(
                 code=error.get("code", -1),
                 message=error.get("message", "Unknown error"),
-                data=error.get("data", ""),
+                data=error_data,
             )
 
         return data.get("result")
