@@ -3,10 +3,10 @@ LiberDiscovery - Router: Auto-Discovery
 Endpoints para gerenciar Network Discovery do Zabbix.
 """
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
-from app.services.zabbix_client import zabbix
+from app.services.zabbix_client import zabbix, ZabbixAPIError
 from app.services.cache import cache
 
 router = APIRouter()
@@ -36,14 +36,17 @@ async def list_discovery_rules():
 @router.post("/discovery/rules")
 async def create_discovery_rule(rule: DiscoveryRuleCreate):
     """Cria uma nova regra de descoberta de rede."""
-    result = await zabbix.create_discovery_rule(
-        name=rule.name,
-        ip_range=rule.ip_range,
-        delay=rule.delay,
-        checks=rule.checks,
-    )
-    await cache.flush_pattern("discovery:*")
-    return {"status": "ok", "result": result}
+    try:
+        result = await zabbix.create_discovery_rule(
+            name=rule.name,
+            ip_range=rule.ip_range,
+            delay=rule.delay,
+            checks=rule.checks,
+        )
+        await cache.flush_pattern("discovery:*")
+        return {"status": "ok", "result": result}
+    except ZabbixAPIError as e:
+        raise HTTPException(status_code=400, detail=f"Zabbix: {e.message} - {e.data}")
 
 
 @router.put("/discovery/rules/{drule_id}")

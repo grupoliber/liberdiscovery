@@ -45,13 +45,22 @@ export default function Discovery() {
   };
 
   const createRule = async (formData) => {
-    await fetch('/api/v1/discovery/rules', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(formData),
-    });
-    setShowCreate(false);
-    refetchRules();
+    try {
+      const res = await fetch('/api/v1/discovery/rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Erro ao criar regra: ${err.detail || res.statusText}`);
+        return;
+      }
+      setShowCreate(false);
+      refetchRules();
+    } catch (err) {
+      alert(`Erro de conexão: ${err.message}`);
+    }
   };
 
   return (
