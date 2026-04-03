@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     cache_ttl: int = 30  # segundos
 
+    # Licença Libernet
+    license_key: str = ""
+
     # CORS
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 

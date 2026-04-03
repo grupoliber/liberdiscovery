@@ -70,6 +70,7 @@ services:
       ZABBIX_USER: Admin
       ZABBIX_PASSWORD: zabbix
       REDIS_URL: redis://redis:6379
+      LICENSE_KEY: ${LICENSE_KEY:-}
     volumes:
       - ./backend/app:/app/app
     restart: unless-stopped

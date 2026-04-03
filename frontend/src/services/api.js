@@ -120,5 +120,11 @@ export const getDiscoveredHosts = (druleId = null) => {
   return request(`/discovery/hosts?${params}`);
 };
 
+// === Licença ===
+export const getLicenseStatus = () => request('/license/status');
+
+export const revalidateLicense = () =>
+  request('/license/revalidate', { method: 'POST' });
+
 // === Health ===
 export const healthCheck = () => request('/health');
