@@ -430,9 +430,9 @@ class ZabbixClient:
         """Cria uma nova regra de descoberta de rede."""
         if checks is None:
             checks = [
-                {"type": 12},                     # ICMP ping (type 12)
-                {"type": 11, "ports": "161"},     # SNMPv2 agent (type 11)
-                {"type": 9, "ports": "10050"},    # Zabbix agent (type 9)
+                {"type": 12},                                          # ICMP ping
+                {"type": 11, "ports": "161", "snmp_community": "public"},  # SNMPv2
+                {"type": 9, "ports": "10050"},                         # Zabbix agent
             ]
 
         return await self._request("drule.create", {
