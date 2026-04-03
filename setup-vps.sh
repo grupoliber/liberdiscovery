@@ -101,8 +101,9 @@ ufw --force reset > /dev/null 2>&1
 ufw default deny incoming
 ufw default allow outgoing
 
-# SSH
+# SSH (porta padrão + porta customizada)
 ufw allow 22/tcp
+ufw allow 2232/tcp
 
 # LiberDiscovery Frontend
 ufw allow 5173/tcp
