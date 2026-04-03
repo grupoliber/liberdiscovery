@@ -7,6 +7,7 @@ import {
   BarChart3,
   Activity,
   Radar,
+  Settings,
 } from 'lucide-react';
 
 const links = [
@@ -17,6 +18,7 @@ const links = [
   { to: '/discovery', label: 'Discovery', icon: Radar },
   { to: '/topology', label: 'Topologia', icon: Network },
   { to: '/metrics', label: 'Métricas', icon: BarChart3 },
+  { to: '/settings', label: 'Configurações', icon: Settings },
 ];
 
 export default function Sidebar() {

@@ -10,6 +10,7 @@ import Topology from './pages/Topology';
 import Metrics from './pages/Metrics';
 import Sensors from './pages/Sensors';
 import Discovery from './pages/Discovery';
+import Settings from './pages/Settings';
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
             <Route path="/discovery" element={<Discovery />} />
             <Route path="/topology" element={<Topology />} />
             <Route path="/metrics" element={<Metrics />} />
+            <Route path="/settings" element={<Settings />} />
           </Routes>
         </main>
       </div>
