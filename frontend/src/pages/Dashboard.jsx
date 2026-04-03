@@ -364,7 +364,7 @@ function DashboardContent() {
                 onKeyDown={e => { if (e.key === 'Enter') { const nt = [...tabs]; nt[idx] = { ...nt[idx], name: editTabValue.trim() || tab.name }; setTabs(nt); setEditingTabName(null); } if (e.key === 'Escape') setEditingTabName(null); }}
                 onBlur={() => { const nt = [...tabs]; nt[idx] = { ...nt[idx], name: editTabValue.trim() || tab.name }; setTabs(nt); setEditingTabName(null); }}
                 className="bg-dark-900 border border-accent-green rounded px-1.5 py-0.5 text-xs text-gray-100 w-24"
-                autoFocus onClick={e => e.stopPropagation()} />
+                autoFocus onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} />
             ) : (
               <span onDoubleClick={() => { if (editMode) { setEditingTabName(idx); setEditTabValue(tab.name); } }}>{tab.name}</span>
             )}
@@ -423,6 +423,7 @@ function DashboardContent() {
           onLayoutChange={handleLayoutChange}
           onResizeStop={() => setTimeout(() => window.dispatchEvent(new Event('resize')), 150)}
           draggableHandle=".widget-drag-handle"
+          draggableCancel=".widget-no-drag"
           compactType="vertical"
           margin={[12, 12]}
           useCSSTransforms={true}
@@ -438,19 +439,19 @@ function DashboardContent() {
                   {editMode ? (
                     <input type="text" value={widget.title} onChange={e => updateWidgetTitle(widget.id, e.target.value)}
                       className="bg-transparent border-b border-dark-600 focus:border-accent-green text-xs font-medium text-dark-100 px-0 py-0.5 w-full outline-none"
-                      onClick={e => e.stopPropagation()} />
+                      onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} />
                   ) : (
                     <span className="text-xs font-medium text-dark-200 truncate">{widget.title}</span>
                   )}
                 </div>
-                <div className="flex items-center gap-1 shrink-0 ml-2">
+                <div className="flex items-center gap-1 shrink-0 ml-2 widget-no-drag">
                   {!editMode && (
-                    <button onClick={() => setFullscreenWidget(widget)} className="text-dark-500 hover:text-dark-200 p-0.5" title="Tela cheia">
+                    <button onClick={(e) => { e.stopPropagation(); setFullscreenWidget(widget); }} onMouseDown={(e) => e.stopPropagation()} className="text-dark-500 hover:text-dark-200 p-0.5" title="Tela cheia">
                       <Maximize2 size={12} />
                     </button>
                   )}
                   {editMode && (
-                    <button onClick={() => removeWidget(widget.id)} className="text-dark-500 hover:text-red-400 p-0.5" title="Remover">
+                    <button onClick={(e) => { e.stopPropagation(); removeWidget(widget.id); }} onMouseDown={(e) => e.stopPropagation()} className="text-dark-500 hover:text-red-400 p-0.5" title="Remover">
                       <Trash2 size={12} />
                     </button>
                   )}
